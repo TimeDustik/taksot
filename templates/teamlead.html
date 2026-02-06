@@ -1,56 +1,113 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <title>Тимлід | Дашборд</title>
+    <style>
+        :root { --primary-color: #0d6efd; }
+        body { background-color: #f4f7f6; font-family: 'Segoe UI', sans-serif; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .border-left-primary { border-left: 5px solid var(--primary-color) !important; }
+        #pasteArea { border: 2px dashed #ced4da; cursor: pointer; background: #fff; transition: 0.3s; }
+        #pasteArea:hover { border-color: var(--primary-color); background: #f8f9fa; }
+        #previewContainer img { max-width: 100%; max-height: 150px; border-radius: 8px; }
+    </style>
 </head>
-<body class="bg-light">
-<nav class="navbar navbar-dark bg-primary mb-4 shadow">
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4 shadow">
     <div class="container">
         <span class="navbar-brand">TL: <strong>{{ user.username }}</strong></span>
-        <a href="/logout" class="btn btn-outline-light btn-sm">Вийти</a>
+        <div class="d-flex align-items-center">
+            <a href="/export_excel?month={{ selected_month }}" class="btn btn-warning btn-sm me-3 fw-bold">ОТЧЕТ ЗА {{ selected_month }}</a>
+            <a href="/logout" class="btn btn-danger btn-sm">Вийти</a>
+        </div>
     </div>
 </nav>
 
 <div class="container">
+    <div class="card mb-4 shadow-sm">
+        <div class="card-body d-flex align-items-center justify-content-between py-2">
+            <h5 class="mb-0 text-secondary">Період перегляду: <strong>{{ selected_month }}</strong></h5>
+            <form action="/dashboard" method="GET" class="d-flex align-items-center gap-2">
+                <select name="month" class="form-select form-select-sm w-auto shadow-none" onchange="this.form.submit()">
+                    {% for m in months %}
+                    <option value="{{ m }}" {% if selected_month == m %}selected{% endif %}>{{ m }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+    </div>
+
     <div class="row">
-        <div class="col-md-4">
-            <div class="card shadow-sm border-0 mb-4">
-                <div class="card-header bg-dark text-white fw-bold">Подати мою витрату</div>
+        <div class="col-lg-4">
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-header bg-dark text-white fw-bold">Подати витрату</div>
                 <div class="card-body">
-                    <form action="/add_expense" method="POST" enctype="multipart/form-data">
-                        <input type="number" step="0.01" name="amount" class="form-control mb-2" placeholder="Сума" required>
+                    <form action="/add_expense" method="POST" enctype="multipart/form-data" id="expenseForm">
+                        <input type="number" step="0.01" name="amount" class="form-control mb-2" placeholder="Сума (грн)" required>
                         <input type="text" name="region" class="form-control mb-2" placeholder="Регіон" required>
                         <input type="date" name="date" class="form-control mb-2" required>
-                        <input type="file" name="receipt" class="form-control mb-2" required>
-                        <button class="btn btn-success w-100">Подати</button>
+                        <input type="text" name="manager_contact" class="form-control mb-2" placeholder="Ваш контакт" required>
+                        <textarea name="comment" class="form-control mb-2" placeholder="Коментар"></textarea>
+
+                        <div class="mb-3">
+                            <label class="small fw-bold">Чек (Файл або Ctrl+V)</label>
+                            <input type="file" name="receipt" id="receiptInput" class="form-control mb-2" required>
+                            <div id="pasteArea" class="p-3 rounded text-center">
+                                <small class="text-muted">Клікни сюди та <b>Ctrl+V</b></small>
+                                <div id="previewContainer" class="mt-2 d-none">
+                                    <img id="pastePreview" src="">
+                                </div>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-success w-100 fw-bold">ВІДПРАВИТИ</button>
                     </form>
                 </div>
             </div>
+
+            <h5 class="fw-bold text-secondary mb-3 small">МОЯ ІСТОРІЯ ({{ selected_month }})</h5>
+            {% for e in my_expenses %}
+            <div class="card mb-2 p-2 border-0 shadow-sm border-left-primary">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small>{{ e.date }}</small>
+                    <strong>{{ e.amount }} грн</strong>
+                    <span class="badge {% if e.status=='Виплачено' %}bg-success{% else %}bg-warning text-dark{% endif %} small">{{ e.status }}</span>
+                </div>
+            </div>
+            {% endfor %}
         </div>
 
-        <div class="col-md-8">
-            <div class="card shadow-sm border-0 mb-4">
-                <div class="card-header bg-primary text-white fw-bold">Моя команда (Керування виплатами)</div>
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-header bg-white fw-bold text-primary">Список команди (включаючи вас)</div>
                 <div class="card-body p-0">
                     <table class="table align-middle mb-0">
                         <thead class="table-light">
-                            <tr><th>Співробітник / Карта</th><th>Загальний борг</th><th>Внести виплату</th></tr>
+                            <tr>
+                                <th>Ім'я співробітника</th>
+                                <th>Загальний борг</th>
+                                <th>Виплата FIFO</th>
+                            </tr>
                         </thead>
                         <tbody>
                             {% for s in subs %}
                             {% set total_debt = s.expenses | selectattr("status", "equalto", "Схвалено") | map(attribute="remaining") | sum %}
                             <tr>
                                 <td>
-                                    <a href="/user_history/{{ s.id }}" class="text-decoration-none fw-bold text-primary">👤 {{ s.username }}</a><br>
-                                    <small class="text-muted">{{ s.card_number or 'карта не вказана' }}</small>
+                                    <a href="/user_history/{{ s.id }}" class="text-decoration-none fw-bold text-dark">
+                                        👤 {{ s.username }} {% if s.id == user.id %}(Ви){% endif %}
+                                    </a><br>
+                                    <small class="text-muted">{{ s.card_number or 'Карта не вказана' }}</small>
                                 </td>
-                                <td class="text-danger fw-bold fs-5">{{ total_debt }} грн</td>
+                                <td><span class="fw-bold text-danger fs-5">{{ total_debt }} грн</span></td>
                                 <td>
                                     {% if total_debt > 0 %}
                                     <form action="/pay_user/{{ s.id }}" method="POST" class="d-flex gap-1">
-                                        <input type="number" step="0.01" name="pay_amount" max="{{ total_debt }}" class="form-control form-control-sm" style="width: 100px;" placeholder="Сума" required>
-                                        <button class="btn btn-sm btn-success fw-bold">Оплатити</button>
+                                        <input type="number" step="0.01" name="pay_amount" max="{{ total_debt }}" class="form-control form-control-sm" style="width: 100px;" required>
+                                        <button class="btn btn-sm btn-success">OK</button>
                                     </form>
                                     {% else %}
                                     <span class="text-muted small">Боргів немає</span>
@@ -63,18 +120,19 @@
                 </div>
             </div>
 
-            <h5 class="fw-bold text-primary mb-3">📝 Заявки на розгляд (Нові)</h5>
+            <h5 class="fw-bold text-primary mb-3">Нові заявки (Чекають на схвалення)</h5>
             {% for exp in pending %}
-            <div class="card mb-2 border-0 shadow-sm p-3">
+            <div class="card mb-3 p-3 border-0 shadow-sm">
                 <div class="d-flex justify-content-between align-items-center">
                     <div>
-                        <strong>{% if exp.user_id == user.id %}МОЯ ВИТРАТА{% else %}{{ exp.owner.username }}{% endif %}</strong>: {{ exp.amount }} грн<br>
+                        <span class="badge bg-secondary mb-1">{{ exp.owner.username }}</span>
+                        <div class="fw-bold fs-5">{{ exp.amount }} грн</div>
                         <small class="text-muted">{{ exp.region }} | {{ exp.date }}</small>
                     </div>
                     <div class="btn-group">
-                        <form action="/process_expense/{{ exp.id }}/approve" method="POST"><button class="btn btn-sm btn-success">Схвалити</button></form>
-                        <form action="/delete_expense/{{ exp.id }}" method="POST"><button class="btn btn-sm btn-outline-danger mx-1">Видалити</button></form>
-                        <a href="/static/uploads/{{ exp.receipt_img }}" target="_blank" class="btn btn-sm btn-light border">🖼️</a>
+                        <form action="/process_expense/{{ exp.id }}/approve" method="POST"><button class="btn btn-sm btn-success">Одобрить</button></form>
+                        <form action="/delete_expense/{{ exp.id }}" method="POST" class="ms-1"><button class="btn btn-sm btn-outline-danger">Отклонить</button></form>
+                        <a href="/static/uploads/{{ exp.receipt_img }}" target="_blank" class="btn btn-sm btn-light border ms-1">Чек</a>
                     </div>
                 </div>
             </div>
@@ -82,5 +140,32 @@
         </div>
     </div>
 </div>
+
+<script>
+    // Safari-friendly Paste Logic
+    const receiptInput = document.getElementById('receiptInput');
+    const previewContainer = document.getElementById('previewContainer');
+    const previewImage = document.getElementById('pastePreview');
+
+    document.addEventListener('paste', function (e) {
+        const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+                const blob = items[i].getAsFile();
+                const file = new File([blob], `img_${Date.now()}.png`, { type: blob.type });
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                receiptInput.files = dataTransfer.files;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    previewImage.src = event.target.result;
+                    previewContainer.classList.remove('d-none');
+                };
+                reader.readAsDataURL(blob);
+            }
+        }
+    });
+</script>
 </body>
 </html>

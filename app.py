@@ -1,27 +1,35 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+import pandas as pd
+from datetime import datetime
+from flask import Flask, render_template, request, redirect, url_for, flash, session, send_file
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from io import BytesIO
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///expenses.db'
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.secret_key = 'super_fifo_key_v6'
+app.secret_key = 'ultra_final_v11_2026'
 
 db = SQLAlchemy(app)
 
+
+# --- МОДЕЛІ ДАНИХ ---
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password_hash = db.Column(db.String(128))
-    role = db.Column(db.String(20))
+    role = db.Column(db.String(20))  # 'admin', 'teamlead', 'l1'
     card_number = db.Column(db.String(20))
     leader_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     must_change_password = db.Column(db.Boolean, default=True)
+
     expenses = db.relationship('Expense', backref='owner', lazy=True)
+    # Зв'язок для ієрархії
+    leader = db.relationship('User', remote_side=[id], backref='subordinates')
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -35,45 +43,26 @@ class Expense(db.Model):
     amount = db.Column(db.Float, nullable=False)
     remaining = db.Column(db.Float, nullable=False)
     region = db.Column(db.String(100))
-    date = db.Column(db.String(20))
+    date = db.Column(db.String(20))  # YYYY-MM-DD
+    month_year = db.Column(db.String(7))  # YYYY-MM
+    comment = db.Column(db.Text)
+    manager_contact = db.Column(db.String(100))
     receipt_img = db.Column(db.String(200))
     status = db.Column(db.String(20), default='Очікує')
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
 
+# Ініціалізація бази даних
 with app.app_context():
     db.create_all()
+    if not User.query.filter_by(username='admin').first():
+        admin = User(username='admin', role='admin', must_change_password=False)
+        admin.set_password('admin123')
+        db.session.add(admin)
+        db.session.commit()
 
 
-# ЛОГІКА FIFO ВИПЛАТИ
-@app.route('/pay_user/<int:user_id>', methods=['POST'])
-def pay_user(user_id):
-    if session.get('role') != 'teamlead': return redirect(url_for('login'))
-
-    amount_to_pay = float(request.form.get('pay_amount', 0))
-    if amount_to_pay <= 0: return redirect(url_for('dashboard'))
-
-    # Знаходимо всі схвалені чеки юзера, сортуємо за ID (найстаріші перші)
-    pending_expenses = Expense.query.filter_by(user_id=user_id, status='Схвалено').order_by(Expense.id.asc()).all()
-
-    for exp in pending_expenses:
-        if amount_to_pay <= 0:
-            break
-
-        if amount_to_pay >= exp.remaining:
-            # Виплата покриває весь чек або більше
-            amount_to_pay -= exp.remaining
-            exp.remaining = 0
-            exp.status = 'Виплачено'
-        else:
-            # Виплата покриває лише частину чека
-            exp.remaining -= amount_to_pay
-            amount_to_pay = 0
-
-    db.session.commit()
-    flash('Виплату проведено успішно')
-    return redirect(url_for('dashboard'))
-
+# --- МАРШРУТИ АВТОРИЗАЦІЇ ---
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -82,30 +71,121 @@ def login():
         if user and user.check_password(request.form['password']):
             session['user_id'] = user.id
             session['role'] = user.role
-            return redirect(url_for('change_password')) if user.must_change_password else redirect(url_for('dashboard'))
-        flash('Помилка входу')
+            if user.must_change_password:
+                return redirect(url_for('change_password'))
+            return redirect(url_for('dashboard'))
+        flash('Невірний логін або пароль')
     return render_template('login.html')
 
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
+@app.route('/change_password', methods=['GET', 'POST'])
+def change_password():
+    if 'user_id' not in session: return redirect(url_for('login'))
+    if request.method == 'POST':
+        user = User.query.get(session['user_id'])
+        user.set_password(request.form['new_password'])
+        user.must_change_password = False
+        db.session.commit()
+        return redirect(url_for('dashboard'))
+    return render_template('change_password.html')
+
+
+# --- ГОЛОВНИЙ ДАШБОРД (DASHBOARD) ---
 
 @app.route('/dashboard')
 def dashboard():
     if 'user_id' not in session: return redirect(url_for('login'))
     user = User.query.get(session['user_id'])
 
+    # Логіка місяців
+    now_month = datetime.now().strftime('%Y-%m')
+    selected_month = request.args.get('month', now_month)
+
+    all_months_raw = db.session.query(Expense.month_year).distinct().all()
+    available_months = sorted([m[0] for m in all_months_raw if m[0]], reverse=True)
+    if now_month not in available_months:
+        available_months.insert(0, now_month)
+
     if user.role == 'admin':
         all_users = User.query.filter(User.role != 'admin').order_by(User.role.desc()).all()
-        return render_template('admin.html', users=all_users, teamleads=User.query.filter_by(role='teamlead').all())
+        teamleads = User.query.filter_by(role='teamlead').all()
+        return render_template('admin.html', users=all_users, teamleads=teamleads)
 
     if user.role == 'teamlead':
-        subs = User.query.filter_by(leader_id=user.id).all()
-        # Нові заявки на розгляд (свої + підлеглі)
-        pending = Expense.query.join(User).filter(((User.leader_id == user.id) | (User.id == user.id)),
-                                                  Expense.status == 'Очікує').all()
-        return render_template('teamlead.html', subs=subs, pending=pending, user=user)
+        # ВИПРАВЛЕНО: Тимлід бачить своїх підлеглих ТА самого себе для виплат і переходів у профілі
+        subs = User.query.filter((User.leader_id == user.id) | (User.id == user.id)).all()
+
+        # Заявки на розгляд (всі, що очікують схвалення)
+        pending = Expense.query.join(User).filter(
+            ((User.leader_id == user.id) | (User.id == user.id)),
+            Expense.status == 'Очікує'
+        ).all()
+
+        # Моя історія за вибраний місяць
+        my_history = Expense.query.filter_by(user_id=user.id, month_year=selected_month).order_by(
+            Expense.id.desc()).all()
+
+        return render_template('teamlead.html',
+                               subs=subs,
+                               pending=pending,
+                               my_expenses=my_history,
+                               user=user,
+                               months=available_months,
+                               selected_month=selected_month)
 
     if user.role == 'l1':
-        my_exps = Expense.query.filter_by(user_id=user.id).order_by(Expense.id.desc()).all()
-        return render_template('l1.html', expenses=my_exps, user=user)
+        my_exps = Expense.query.filter_by(user_id=user.id, month_year=selected_month).order_by(Expense.id.desc()).all()
+        return render_template('l1.html', expenses=my_exps, user=user, months=available_months,
+                               selected_month=selected_month)
+
+
+# --- ЛОГІКА ВИТРАТ ТА FIFO ---
+
+@app.route('/add_expense', methods=['POST'])
+def add_expense():
+    if 'user_id' not in session: return redirect(url_for('login'))
+    file = request.files.get('receipt')
+    if file:
+        filename = secure_filename(file.filename)
+        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        date_str = request.form['date']
+        amt = float(request.form['amount'])
+        new_exp = Expense(
+            amount=amt, remaining=amt, region=request.form['region'],
+            date=date_str, month_year=date_str[:7],
+            comment=request.form.get('comment'), manager_contact=request.form.get('manager_contact'),
+            receipt_img=filename, user_id=session['user_id']
+        )
+        db.session.add(new_exp)
+        db.session.commit()
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/pay_user/<int:user_id>', methods=['POST'])
+def pay_user(user_id):
+    if session.get('role') != 'teamlead': return "Access Denied", 403
+    amount_to_pay = float(request.form.get('pay_amount', 0))
+
+    # FIFO: Спочатку закриваємо найстаріші схвалені чеки співробітника
+    pending_expenses = Expense.query.filter_by(user_id=user_id, status='Схвалено').order_by(Expense.id.asc()).all()
+
+    for exp in pending_expenses:
+        if amount_to_pay <= 0: break
+        if amount_to_pay >= exp.remaining:
+            amount_to_pay -= exp.remaining
+            exp.remaining = 0
+            exp.status = 'Виплачено'
+        else:
+            exp.remaining -= amount_to_pay
+            amount_to_pay = 0
+    db.session.commit()
+    return redirect(url_for('dashboard'))
 
 
 @app.route('/process_expense/<int:id>/<action>', methods=['POST'])
@@ -119,31 +199,71 @@ def process_expense(id, action):
     return redirect(request.referrer)
 
 
-@app.route('/add_expense', methods=['POST'])
-def add_expense():
-    file = request.files.get('receipt')
-    if file:
-        filename = secure_filename(file.filename)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        amt = float(request.form['amount'])
-        new_exp = Expense(amount=amt, remaining=amt, region=request.form['region'], date=request.form['date'],
-                          receipt_img=filename, user_id=session['user_id'])
-        db.session.add(new_exp)
-        db.session.commit()
-    return redirect(url_for('dashboard'))
+@app.route('/delete_expense/<int:id>', methods=['POST'])
+def delete_expense(id):
+    exp = Expense.query.get_or_404(id)
+    db.session.delete(exp)
+    db.session.commit()
+    return redirect(request.referrer)
 
 
-@app.route('/user_history/<int:user_id>')
-def user_history(user_id):
-    u = User.query.get_or_404(user_id)
-    exps = Expense.query.filter_by(user_id=user_id).order_by(Expense.id.desc()).all()
-    return render_template('user_history.html', target_user=u, expenses=exps)
+# --- ЕКСПОРТ EXCEL ЗА МІСЯЦЬ (3 Аркуші) ---
 
+@app.route('/export_excel')
+def export_excel():
+    if 'user_id' not in session: return redirect(url_for('login'))
+    user = User.query.get(session['user_id'])
+    sel_month = request.args.get('month', datetime.now().strftime('%Y-%m'))
+
+    query = Expense.query.filter(Expense.month_year == sel_month)
+    if user.role == 'teamlead':
+        query = query.join(User).filter((User.leader_id == user.id) | (User.id == user.id))
+    elif user.role == 'l1':
+        query = query.filter(Expense.user_id == user.id)
+
+    expenses = query.all()
+
+    # Аркуш 1: Деталі
+    df_det = pd.DataFrame([{
+        "Сотрудник": e.owner.username, "Сумма": e.amount, "Регион": e.region,
+        "Дата": e.date, "Коментарий": e.comment, "Заказчик": e.manager_contact
+    } for e in expenses])
+
+    # Аркуш 2: Регіони
+    reg_list = [{"Регион": e.region, "Осталось": e.remaining} for e in expenses]
+    df_reg = pd.DataFrame(reg_list).groupby("Осталось").sum().reset_index() if reg_list else pd.DataFrame(
+        columns=["Регион", "Осталось"])
+
+    # Аркуш 3: Співробітники
+    emp_list = [{"Сотрудник": e.owner.username, "Траты": e.amount, "Осталось": e.remaining} for e in expenses]
+    if emp_list:
+        df_emp = pd.DataFrame(emp_list).groupby("Сотрудник").sum().reset_index()
+        total_row = pd.DataFrame(
+            [{"Сотрудник": "ВСЕГО:", "Траты": df_emp["Траты"].sum(), "Осталось": df_emp["Осталось"].sum()}])
+        df_emp = pd.concat([df_emp, total_row], ignore_index=True)
+    else:
+        df_emp = pd.DataFrame(columns=["Сотрудник", "Траты", "Осталось"])
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_det.to_excel(writer, index=False, sheet_name='Детальный отчет')
+        df_reg.to_excel(writer, index=False, sheet_name='По регионам')
+        df_emp.to_excel(writer, index=False, sheet_name='Итог по сотрудникам')
+
+    output.seek(0)
+    return send_file(output, download_name=f"Full_Report_{sel_month}.xlsx", as_attachment=True)
+
+
+# --- АДМІНІСТРУВАННЯ КОРИСТУВАЧІВ ---
 
 @app.route('/create_user', methods=['POST'])
 def create_user():
-    new_user = User(username=request.form['username'], role=request.form['role'],
-                    card_number=request.form.get('card_number'), leader_id=request.form.get('leader_id') or None)
+    new_user = User(
+        username=request.form['username'],
+        role=request.form['role'],
+        card_number=request.form.get('card_number'),
+        leader_id=request.form.get('leader_id') or None
+    )
     new_user.set_password("Dfg@321Dfg")
     db.session.add(new_user)
     db.session.commit()
@@ -170,31 +290,14 @@ def reset_password(id):
     return redirect(url_for('dashboard'))
 
 
-@app.route('/delete_expense/<int:id>', methods=['POST'])
-def delete_expense(id):
-    exp = Expense.query.get_or_404(id)
-    db.session.delete(exp)
-    db.session.commit()
-    return redirect(request.referrer)
-
-
-@app.route('/change_password', methods=['GET', 'POST'])
-def change_password():
-    if request.method == 'POST':
-        user = User.query.get(session['user_id'])
-        user.set_password(request.form['new_password'])
-        user.must_change_password = False
-        db.session.commit()
-        return redirect(url_for('dashboard'))
-    return render_template('change_password.html')
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
+@app.route('/user_history/<int:user_id>')
+def user_history(user_id):
+    u = User.query.get_or_404(user_id)
+    exps = Expense.query.filter_by(user_id=user_id).order_by(Expense.id.desc()).all()
+    return render_template('user_history.html', target_user=u, expenses=exps)
 
 
 if __name__ == '__main__':
-    if not os.path.exists(app.config['UPLOAD_FOLDER']): os.makedirs(app.config['UPLOAD_FOLDER'])
+    if not os.path.exists(app.config['UPLOAD_FOLDER']):
+        os.makedirs(app.config['UPLOAD_FOLDER'])
     app.run(debug=True)
