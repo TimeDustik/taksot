@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>Виплати | ExpenseTrack</title>
+</head>
+<body class="bg-light">
+<nav class="navbar navbar-dark bg-warning mb-4 shadow">
+    <div class="container text-dark">
+        <span class="navbar-brand text-dark fw-bold">💰 КЕРУВАННЯ ВИПЛАТАМИ</span>
+        <a href="/dashboard" class="btn btn-outline-dark btn-sm">Назад в кабінет</a>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body">
+            <form method="GET" action="/payments" class="row g-2 align-items-center">
+                <div class="col-auto"><label class="fw-bold">Фільтр по L1:</label></div>
+                <div class="col-md-4">
+                    <select name="user_id" class="form-select">
+                        <option value="">Усі співробітники</option>
+                        {% for s in subs %}
+                        <option value="{{ s.id }}" {% if selected_user_id == s.id|string %}selected{% endif %}>{{ s.username }}</option>
+                        {% endfor %}
+                    </tbody>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-primary">Показати</button>
+                    <a href="/payments" class="btn btn-secondary">Скинути</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card shadow-sm border-0">
+        <div class="card-header bg-white fw-bold">Схвалені чеки до оплати</div>
+        <div class="card-body p-0">
+            <table class="table align-middle mb-0">
+                <thead class="table-dark">
+                    <tr><th>Співробітник</th><th>Залишок</th><th>Дата/Регіон</th><th>Виплатити суму</th></tr>
+                </thead>
+                <tbody>
+                    {% for e in to_pay %}
+                    <tr>
+                        <td><strong>{{ e.owner.username }}</strong><br><small class="text-muted">{{ e.owner.card_number }}</small></td>
+                        <td class="text-primary fw-bold fs-5">{{ e.remaining }} грн</td>
+                        <td>{{ e.date }}<br><small>{{ e.region }}</small></td>
+                        <td>
+                            <form action="/process_expense/{{ e.id }}/pay" method="POST" class="d-flex gap-2">
+                                <input type="number" step="0.01" name="pay_amount" max="{{ e.remaining }}" class="form-control" style="width: 120px;" placeholder="Сума" required>
+                                <button class="btn btn-success fw-bold">OK</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-center p-4">Немає схвалених витрат для виплати за цим фільтром</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
