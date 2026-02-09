@@ -4,208 +4,103 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <title>Кабінет співробітника | L1</title>
+    <title>L1 | Подача витрат</title>
     <style>
-        body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .card { border: none; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        .navbar { box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .status-waiting { border-left: 5px solid #ffc107; }
-        .status-approved { border-left: 5px solid #0d6efd; }
-        .status-paid { border-left: 5px solid #198754; }
-
-        /* Стиль для зони вставки з буфера */
-        #pasteArea {
-            border: 2px dashed #ccc;
-            background-color: #fff;
-            transition: all 0.3s ease;
-            cursor: pointer;
-        }
-        #pasteArea:hover { border-color: #0d6efd; background-color: #f0f7ff; }
-        #previewContainer img {
-            max-width: 100%;
-            max-height: 200px;
-            border-radius: 10px;
-            margin-top: 10px;
-        }
+        body { background-color: #f8f9fa; }
+        .card { border-radius: 15px; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .category-box { background: #fff; border: 1px solid #dee2e6; border-radius: 10px; padding: 15px; }
+        #pasteArea { border: 2px dashed #ccc; cursor: pointer; }
     </style>
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+<nav class="navbar navbar-dark bg-dark mb-4">
     <div class="container">
-        <span class="navbar-brand">Співробітник: <strong>{{ user.username }}</strong></span>
-        <div class="d-flex align-items-center">
-            <a href="/export_excel?month={{ selected_month }}" class="btn btn-outline-info btn-sm me-3 fw-bold">📊 Звіт за {{ selected_month }}</a>
+        <span class="navbar-brand"><strong>{{ user.username }}</strong> ({{ user.city }})</span>
+        <div class="d-flex">
+            <a href="/export_excel?month={{ selected_month }}" class="btn btn-outline-info btn-sm me-2">📊 Excel {{ selected_month }}</a>
             <a href="/logout" class="btn btn-danger btn-sm">Вийти</a>
         </div>
     </div>
 </nav>
 
 <div class="container">
-    <div class="card mb-4">
-        <div class="card-body d-flex align-items-center justify-content-between py-2">
-            <h5 class="mb-0 text-muted small text-uppercase fw-bold">Період перегляду:</h5>
-            <form action="/dashboard" method="GET" class="d-flex align-items-center gap-2">
-                <select name="month" class="form-select form-select-sm w-auto shadow-none" onchange="this.form.submit()">
-                    {% for m in months %}
-                    <option value="{{ m }}" {% if selected_month == m %}selected{% endif %}>{{ m }}</option>
-                    {% endfor %}
-                </select>
-            </form>
-        </div>
-    </div>
-
-    <div class="row">
-        <div class="col-lg-5">
-            <div class="card mb-4 shadow-sm">
-                <div class="card-header bg-primary text-white fw-bold">Нова заявка на витрату</div>
-                <div class="card-body">
-                    <form action="/add_expense" method="POST" enctype="multipart/form-data" id="expenseForm">
+    <div class="row justify-content-center">
+        <div class="col-lg-6">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-primary text-white fw-bold py-3">Нова заявка</div>
+                <div class="card-body p-4">
+                    <form action="/add_expense" method="POST" enctype="multipart/form-data">
                         <div class="row">
-                            <div class="col-md-6 mb-2">
+                            <div class="col-6 mb-3">
                                 <label class="small fw-bold">Сума (грн)</label>
-                                <input type="number" step="0.01" name="amount" class="form-control" placeholder="0.00" required>
+                                <input type="number" step="0.01" name="amount" class="form-control" required>
                             </div>
-                            <div class="col-md-6 mb-2">
-                                <label class="small fw-bold">Дата</label>
-                                <input type="date" name="date" class="form-control" required>
+                            <div class="col-6 mb-3">
+                                <label class="small fw-bold">Регіон (Цифри)</label>
+                                <input type="number" name="region" class="form-control" placeholder="Код" required>
                             </div>
-                        </div>
-
-                        <div class="mb-2">
-                            <label class="small fw-bold">Регіон</label>
-                            <input type="text" name="region" class="form-control" placeholder="Вкажіть місто/область" required>
-                        </div>
-
-                        <div class="mb-2">
-                            <label class="small fw-bold">Контакт керівника (ПІБ / Тел)</label>
-                            <input type="text" name="manager_contact" class="form-control" placeholder="Хто схвалив витрату?" required>
-                        </div>
-
-                        <div class="mb-2">
-                            <label class="small fw-bold">Коментар</label>
-                            <textarea name="comment" class="form-control" rows="2" placeholder="Наприклад: Обід з клієнтом, таксі..."></textarea>
                         </div>
 
                         <div class="mb-3">
-                            <label class="small fw-bold">Чек (Файл або Ctrl+V)</label>
-                            <input type="file" name="receipt" id="receiptInput" class="form-control mb-2" required>
+                            <label class="small fw-bold">Дата</label>
+                            <input type="date" name="date" class="form-control" required>
+                        </div>
 
-                            <div id="pasteArea" class="p-3 rounded text-center">
-                                <small class="text-muted">Клікни сюди та натисни <b>Ctrl+V</b> для вставки скріншота</small>
-                                <div id="previewContainer" class="mt-2 d-none">
-                                    <p class="small text-success mb-1 fw-bold">✅ Зображення додано!</p>
-                                    <img id="pastePreview" src="" alt="Прев'ю чека">
-                                </div>
+                        <div class="mb-3">
+                            <label class="small fw-bold">Керівник регіону (ПІБ)</label>
+                            <input type="text" name="manager_contact" class="form-control" placeholder="ПІБ того, хто схвалив" required>
+                        </div>
+
+                        <div class="category-box mb-3 shadow-sm">
+                            <label class="small fw-bold d-block mb-2">Оберіть тип витрати:</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="category" id="l1c1" value="Транспортні витрати" checked>
+                                <label class="form-check-label" for="l1c1">Транспортні витрати (місто/регіон)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="category" id="l1c2" value="Доставка НП">
+                                <label class="form-check-label" for="l1c2">Доставка НП (місто/регіон)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="category" id="l1c3" value="Закупка">
+                                <label class="form-check-label" for="l1c3">Закупка (місто/регіон)</label>
                             </div>
                         </div>
 
-                        <button type="submit" class="btn btn-primary w-100 fw-bold py-2 shadow-sm">ПОДАТИ НА РОЗГЛЯД</button>
+                        <div class="mb-3">
+                            <label class="small fw-bold">Коментар</label>
+                            <textarea name="comment" class="form-control" rows="2" placeholder="Опишіть деталі..."></textarea>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="small fw-bold">Чек (Файл або Скріншот)</label>
+                            <input type="file" name="receipt" id="receiptInput" class="form-control mb-2" required>
+                            <div id="pasteArea" class="p-3 rounded text-center small text-muted">Клікни сюди + Ctrl+V</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100 fw-bold py-2">ВІДПРАВИТИ НА РОЗГЛЯД</button>
                     </form>
                 </div>
             </div>
-        </div>
-
-        <div class="col-lg-7">
-            <h4 class="fw-bold text-dark mb-3">Мої витрати за {{ selected_month }}</h4>
-
-            {% for exp in expenses %}
-            <div class="card mb-3 shadow-sm border-0
-                {% if exp.status == 'Очікує' %}status-waiting
-                {% elif exp.status == 'Схвалено' %}status-approved
-                {% else %}status-paid{% endif %}">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <span class="badge
-                                {% if exp.status == 'Очікує' %}bg-warning text-dark
-                                {% elif exp.status == 'Схвалено' %}bg-primary
-                                {% else %}bg-success{% endif %} mb-2">
-                                {{ exp.status }}
-                            </span>
-                            <h5 class="fw-bold mb-1">{{ exp.amount }} грн</h5>
-                            <p class="small text-muted mb-2">{{ exp.region }} | {{ exp.date }}</p>
-
-                            <div class="small mb-1"><strong>Керівник:</strong> {{ exp.manager_contact }}</div>
-                            {% if exp.comment %}
-                            <div class="p-2 bg-light rounded small fst-italic">"{{ exp.comment }}"</div>
-                            {% endif %}
-                        </div>
-                        <div class="text-end">
-                            <div class="small text-muted mb-1">Залишок:</div>
-                            <span class="fw-bold text-dark">{{ exp.remaining }} грн</span>
-                            <div class="mt-3">
-                                <a href="/static/uploads/{{ exp.receipt_img }}" target="_blank" class="btn btn-sm btn-outline-secondary">🖼️ Чек</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            {% else %}
-            <div class="text-center py-5 bg-white rounded card">
-                <p class="text-muted mb-0">У вибраному місяці витрат не знайдено.</p>
-            </div>
-            {% endfor %}
         </div>
     </div>
 </div>
 
 <script>
     const receiptInput = document.getElementById('receiptInput');
-    const previewContainer = document.getElementById('previewContainer');
-    const previewImage = document.getElementById('pastePreview');
-    const expenseForm = document.getElementById('expenseForm');
-
-    // Функція для обробки вставки
-    async function handlePaste(e) {
+    document.addEventListener('paste', function (e) {
         const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-
         for (let i = 0; i < items.length; i++) {
             if (items[i].type.indexOf('image') !== -1) {
                 const blob = items[i].getAsFile();
-                if (!blob) continue;
-
-                // Створюємо унікальне ім'я файлу
-                const fileName = `screenshot_${Date.now()}.png`;
-                const file = new File([blob], fileName, { type: blob.type });
-
-                // Використовуємо DataTransfer для Safari та інших браузерів
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(file);
-                receiptInput.files = dataTransfer.files;
-
-                // Відображаємо прев'ю
-                const reader = new FileReader();
-                reader.onload = function(event) {
-                    previewImage.src = event.target.result;
-                    previewContainer.classList.remove('d-none');
-                };
-                reader.readAsDataURL(blob);
-
-                // Safari потребує візуального підтвердження, що файл вибрано
-                console.log("Файл прикріплено: " + fileName);
+                const file = new File([blob], `screenshot_${Date.now()}.png`, { type: blob.type });
+                const dt = new DataTransfer(); dt.items.add(file);
+                receiptInput.files = dt.files;
+                alert("Зображення прикріплено!");
             }
         }
-    }
-
-    // Слухаємо вставку
-    document.addEventListener('paste', handlePaste);
-
-    // Додатково: валідація форми перед відправкою
-    expenseForm.addEventListener('submit', function(e) {
-        if (receiptInput.files.length === 0) {
-            e.preventDefault();
-            alert("Будь ласка, завантажте або вставте скріншот чека!");
-        }
-    });
-
-    // Візуальний ефект для зони вставки
-    document.getElementById('pasteArea').addEventListener('click', function() {
-        this.style.borderColor = '#0d6efd';
-        setTimeout(() => { this.style.borderColor = '#ccc'; }, 500);
     });
 </script>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
